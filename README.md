@@ -35,6 +35,8 @@ git clone https://github.com/inesmora29/basic-data-analysis.git
 
 4. Knit the document to generate the HTML report.
 
+5. You can also access [this link](https://rpubs.com/Ines29/diabetes-analysis-r) to view the HTML report
+
 ## Results
 - The correlation analysis shows how the variables are related to each other
 - The PCA analysis shows the contribution of various variables to the principal components.
