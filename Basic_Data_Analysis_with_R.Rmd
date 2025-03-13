@@ -35,7 +35,7 @@ We will first load our data into our workspace.
 
 ```{r}
 library(readr)
-diabetes <- read_csv("/Users/inesmora/Downloads/diabetes.csv")
+diabetes <- read_csv("diabetes.csv")
 ```
 
 Once the dataframe is loaded, we can fist use de function `head()` to see the first rows and get an idea how the data is structured.
