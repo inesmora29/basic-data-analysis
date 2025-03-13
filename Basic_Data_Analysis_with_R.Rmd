@@ -1,0 +1,585 @@
+---
+title: "Basic Data Analysis"
+author: "Inés del Carmen Mora García"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\tableofcontents
+
+# Introduction
+
+This study aims to explore, clean, and prepare a dataset to effectively find correlations among the variables and classify individuals into three categories: Diabetic, Non-Diabetic, and Prediabetic. The motivation behind this project is to gain experience in data analysis and machine learning techniques while also providing a reference for others interested in similar topics.
+
+The data we have chosen for this project was extracted from [https://hbiostat.org/data/](https://hbiostat.org/data/), provided by Dr. John Schorling from the Department of Medicine, School of Medicine at the University of Virginia. This data comes from a study aimed at understanding the prevalence of obesity and diabetes among African Americans, as well as other cardiovascular risk factors. More information about the data collection process can be found in the article: *Willems JP, Saunders JT, DE Hunt, JB Schorling: "Prevalence of coronary heart disease risk factors among rural blacks: A community-based study." Southern Medical Journal 90:814-820; 1997.*
+
+This project is devided into 4 main parts:
+
+1. **Raw Data Exploration and Ceaning**: this section includes the typical first approach to the data. We will inspect the dimensions of the dataframe, explore what variables are included and what values they take and if necessary, the data will be reformated, variables will be eliminated if they do not provide useful information for the analysis, and NA's values will be treated as convenient. 
+
+2. **Correlation Exploration**: in this section we will try to look for relations among the variables for our dataset. For this, the choosing of an appropiate statistical test will be necessary.
+
+3. **Principal Component Analysis**: a principal component analysis (PCA) will be performed to check whether dimensionaitly of our data can be reduced without loosing too much information.
+
+4. **SVM, k-NN and Decison Tree**: lastly, we will train 3 machine learning models after the dimesionality has been reduced and we will test how efficient they are in predicting the variable response.
+
+
+# Raw Data Exploration and Cleaning
+
+## Initial exploration
+
+We will first load our data into our workspace.
+
+```{r}
+library(readr)
+diabetes <- read_csv("/Users/inesmora/Downloads/diabetes.csv")
+```
+
+Once the dataframe is loaded, we can fist use de function `head()` to see the first rows and get an idea how the data is structured.
+
+```{r}
+head(diabetes)
+```
+Our data contains variables that provide us with information related to individuals' health and physical characteristics, such as cholesterol levels, glycated hemoglobin levels, weight, height, etc. Let's check the dimentions of our dataframe:
+
+```{r}
+dim(diabetes)
+```
+Our data frame contains 403 rows (samples or individuals) and 19 columns (variables). Let's explore whether NA or NULL values are present in our data.
+
+```{r}
+table(is.na(diabetes))
+table(is.null(diabetes))
+```
+We have 575 NA values and 0 NULL values. 
+
+We can also use the function `str()`to quickly explore the type of data contained in each variable:
+
+```{r}
+str(diabetes)
+```
+
+We have 3 variables type `chr` and the rest are numerical variables. Within the first samples, we can see a large concentration of NA values in the variables `bp.2s`and `bp.2d`.
+
+With the function `summary()`we can see statistical summary of our data, included the quartiles, the mean, and the number of NA's:
+
+```{r}
+summary(diabetes)
+```
+The variables `bp.2s`adn `bp.2d` contain most of the NA's values present in our data. Since a very large number (more than half of the sample) of NAs are concentrated in two variables, removing all observations containing these NAs could result in losing valuable information for our study contained in the other variables; we would reduce the number of samples from 403 to 130. 
+
+```{r}
+diabetes_noNA <- na.omit(diabetes)
+dim(diabetes_noNA)
+```
+
+If these variables are not relevant for our study, we can decide to eliminate them and then omit NA values. However, in this case an explanation was provided by the authors of the data. The article by Willems JP, Saunders JT, DE Hunt, JB Schorling: *Prevalence of coronary heart disease risk factors among rural blacks: A community-based study. Southern Medical Journal 90:814-820; 1997* explains that blood pressure was measured approximately 15 minutes after the examination began (`bp.1`), and if the pressure was greater than or equal to 140/90 mmHg, a second measurement was taken approximately 10 minutes later (`bp.2`). For these cases, the blood pressure considered by the researchers is the average of both measurements.  
+
+Now that we understand why there are so many NA values in these fields, we can conveniently reformulate our table and then omit the NA values.
+
+
+## Data Cleaning and Reformating
+
+Fistly we will change the data to the metric system (optional) and we will create a couple of new variables:
+
+```{r}
+diabetes$weight <- diabetes$weight * 0.453592 # From pounds to Kg
+diabetes$height <- diabetes$height + 100 # This variable equals height - 100, we add the 100 back
+diabetes$BMI <- with(diabetes, weight / ((height)/100)^2) # We can create a variable with the BMI for each sample
+
+diabetes$waist <- diabetes$waist * 2.54 # From inches to cm
+diabetes$hip <- diabetes$hip * 2.54 # From inches to cm
+diabetes$waist_to_hip <- diabetes$waist / diabetes$hip # We can create a variable for hip to waist ratio
+```
+
+2. We  create a variable containing the means of the sistolics and diastolics pressures. In case one of the two values is missing, we keep just one. We will then delete the variables that will be of no use for our analysis.
+
+```{r}
+diabetes$bp.s <- ifelse(!is.na(diabetes$bp.1s) & !is.na(diabetes$bp.2s),
+                        (diabetes$bp.1s + diabetes$bp.2s) / 2,
+                        ifelse(!is.na(diabetes$bp.1s), diabetes$bp.1s,
+                               diabetes$bp.2s))
+
+diabetes$bp.d <- ifelse(!is.na(diabetes$bp.1d) & !is.na(diabetes$bp.2d),
+                        (diabetes$bp.1d + diabetes$bp.2d) / 2,
+                        ifelse(!is.na(diabetes$bp.1d), diabetes$bp.1d,
+                               diabetes$bp.2d))
+
+columns_to_delete <- c("bp.1s", "bp.2s", "bp.1d", "bp.2d", "time.ppn", "id", "gender", "frame", "location")
+
+# We can now eliminate the columns "bp.1s", "bp.2s", "bp.1d" y "bp.2d", since we have incorporated the variables "bp.s" and "bp.d". We also remove other variables that we won't be using in our analysis
+diabetes <- diabetes[, !(names(diabetes) %in% columns_to_delete)]
+```
+
+3. We omit NA values:
+
+```{r}
+diabetes <- na.omit(diabetes)
+dim(diabetes)
+```
+
+Now that our data is clean, we can start doing a more thorough examination of our data.
+
+# Correlation Exploration
+
+## Normal distribution?
+
+To begin our analysis, we need to understand how the values of our variables are distributed. This will allow us to make informed decisions on the statistical testing required to find correlations. To assess the distribution of our variables, we will perform the following steps:
+
+1. **Histogram Visualization:**  
+   Histograms provide a graphical representation of the distribution of each variable. They allow us to quickly assess whether the data is approximately normal, skewed, or has heavy tails. This visual examination is a preliminary step to identify patterns or irregularities in the data.
+
+2. **Q-Q Plots (Quantile-Quantile Plots):**  
+   Q-Q plots compare the quantiles of our variables against the quantiles of a standard normal distribution. If the data is normally distributed, the points will approximately lie on a straight diagonal line. Deviations from this line indicate departures from normality, such as skewness or heavy tails.
+
+3. **Shapiro-Wilk Test:**  
+   This is a statistical test used to determine if a sample comes from a normally distributed population. It is particularly effective for small to moderate-sized datasets. However, it tends to be overly sensitive for large datasets, often detecting minor deviations from normality that are not practically significant.
+
+4. **Anderson-Darling Test:**  
+   The Anderson-Darling test is an alternative to the Shapiro-Wilk test, especially when we are interested in assessing the fit of the data to a normal distribution **with particular sensitivity to deviations in the tails**. Unlike the Shapiro-Wilk test, the Anderson-Darling test performs well on both small and large datasets. 
+
+**Why Multiple Tests?**
+
+Using both visualizations (histograms, Q-Q plots) and statistical tests (Shapiro-Wilk, Anderson-Darling) provides a comprehensive assessment of normality. Visual methods offer an intuitive understanding of the data distribution, while statistical tests provide formal evidence to support or reject normality assumptions.
+
+
+```{r}
+library(nortest)
+
+check_normality <- function(data) {
+  # Prepare an empty data frame to store results
+  results <- data.frame(Variable = character(), Test = character(), Statistic = numeric(), p_value = numeric())
+  
+  for (col_name in colnames(data)) {
+    if (is.numeric(data[[col_name]])) {
+      
+      # Shapiro-Wilk Test
+      shapiro <- shapiro.test(data[[col_name]])
+      results <- rbind(results, data.frame(Variable = col_name, 
+                                           Test = "Shapiro-Wilk", 
+                                           Statistic = shapiro$statistic, 
+                                           p_value = shapiro$p.value))
+      
+      # Anderson-Darling Test
+      anderson_darling <- ad.test(data[[col_name]])
+      results <- rbind(results, data.frame(Variable = col_name, 
+                                           Test = "Anderson-Darling", 
+                                           Statistic = anderson_darling$statistic, 
+                                           p_value = anderson_darling$p.value))
+      
+      # Plot Histogram and QQ plot for each variable
+      par(mfrow = c(1, 2))
+      hist(data[[col_name]], main = paste("Histogram of", col_name), col = "skyblue", breaks = 20)
+      qqnorm(data[[col_name]], main = paste("QQ Plot of", col_name))
+      qqline(data[[col_name]], col = "red")
+    }
+  }
+  
+  # Reset plot layout to single plot
+  par(mfrow = c(1, 1))
+  
+  # Return the results data frame
+  return(results)
+}
+
+
+normality_results <- check_normality(diabetes)
+
+
+```
+
+We have visually explored the distribution of our data using histograms and Q-Q plots. This initial inspection provides a rough idea of whether our variables follow a normal distribution. For some variables, such as `bp.d` and `waist_to_hip`, the Q-Q plots and histograms suggest a reasonable approximation to normality, but the presence of longer tails warrants closer examination.  
+
+On the other hand, variables like `glyhb` and `stab.glu` clearly deviate from normality, displaying skewed distributions and notable departures from the Q-Q line.  
+
+However, visual inspection alone is not sufficient to conclusively determine normality.  Therefore, it is essential to apply formal statistical tests that provide quantitative evidence of normality or lack thereof.
+
+```{r}
+print(normality_results)
+```
+
+
+These results show the normality testing for different variables using both the **Shapiro-Wilk (W)** and **Anderson-Darling (A)** tests.  
+----
+***NOTE***
+
+- **p-values < 0.05:** The variable **significantly deviates from normality**.  
+- **p-values > 0.05:** The variable **does not significantly deviate from normality**, i.e., it could be considered approximately normal.  
+----
+
+### **Variables That Passed Normality Tests (p > 0.05):**
+- `bp.d`: Both tests (p = 0.20 and p = 0.0887) suggest this variable is **normally distributed**.  
+-`waist_to_hip: The Shapiro-Wilk test shows a small deviation (p-value = 0.005), but the Anderson-Darling test (p-value = 0.0902) suggests that the deviation from normality is not strong. This variable only slightly deviates from normality.
+
+### **Variables That Failed Normality Tests (p < 0.05):**
+- All other variables.  
+- Very low p-values indicate **strong deviation from normality**.  
+- The **Anderson-Darling test is particularly sensitive to deviations in the tails**, and many variables show significant issues here.  
+
+
+
+## Correlation Analysis
+
+Now that we have ruled out normality in most of our data, we have valuable information on how to proceed to look for correlations within our variables. Since **parametric correlation** methods like Pearson's correlation assume normality and linearity, applying them to non-normally distributed data could produce misleading results.  
+
+Instead, we will rely on **non-parametric correlation methods**, which are more robust to violations of normality and can detect **monotonic relationships** even if they are not perfectly linear. The two most commonly used methods are:  
+
+- **Spearman’s Rank Correlation Coefficient:** Measures the strength and direction of the monotonic relationship between two variables. It converts data to ranks, making it appropriate for data that is not normally distributed or contains outliers.  
+- **Kendall’s Tau:** A more conservative non-parametric method that evaluates the ordinal association between two variables. It is particularly useful for smaller datasets or when the data contains many tied ranks.  
+
+```{r}
+
+cor_matrices <- list(
+  Spearman = cor(diabetes, use = "pairwise.complete.obs", method = "spearman"),
+  Kendall = cor(diabetes, use = "pairwise.complete.obs", method = "kendall")
+)
+```
+
+
+To more comfortably observe relationships within the variables, we will create a heatmap with the correaltion matrices.
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+plot_heatmap <- function(cor_matrix, title) {
+  melted_cor <- melt(cor_matrix)
+  ggplot(data = melted_cor, aes(x = Var1, y = Var2, fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    labs(title = title, fill = "Correlation")
+}
+
+plot_heatmap(cor_matrices$Spearman, "Spearman Correlation Matrix")
+plot_heatmap(cor_matrices$Kendall, "Kendall Correlation Matrix")
+
+
+```
+
+Firsty, we observe that Kendall's Tau identifies less strong correlations within the data than Spearman.
+
+We can observe some variables that are strongly correlated with each other, either directly or indirectly. Some correlations are not surprising, such us `hip` to `waist`, `weight` to `waist`and `hip`.
+We do not see very high correlations between GlyHb and the other variables, except in the case of stabilized glucose levels (`stab.glu`). This makes sense because, in general, glycated hemoglobin is an indicator of long-term glycemic control and reflects the average blood glucose exposure over a prolonged period, approximately the last 2 to 3 months. The second variable with a moderately positive correlation is the cholesterol-to-HDL ratio (`ratio`). We observe other variables that are positively related to a lesser degree.  
+
+We can now check which correlations are statistically significant.
+
+```{r}
+get_significance <- function(data, method = "kendall") {
+  n <- ncol(data)
+  sig_matrix <- matrix(NA, n, n)
+  rownames(sig_matrix) <- colnames(data)
+  colnames(sig_matrix) <- colnames(data)
+  
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      test <- cor.test(data[[i]], data[[j]], method = method)
+      sig_matrix[i, j] <- test$p.value
+      sig_matrix[j, i] <- test$p.value
+    }
+  }
+  return(sig_matrix)
+}
+
+
+get_significance(diabetes, method = "spearman")
+get_significance(diabetes, method = "kendall")
+```
+
+
+When ckecking correlations with Spearsman, we get warned about ties. This means that multiple samples have the same values for some variables, which can make Spearsman's test slighly biased. 
+When data has a significant number of ties, **Kendall’s Tau** is generally more reliable than **Spearman’s Rank Correlation** because:
+
+1. **Direct Pair Comparison:** Kendall’s Tau compares all possible pairs of data points and counts how many pairs are in the same order. 
+2. **Less Sensitive to Ties:** Unlike Spearman, it doesn’t rely on assigning ranks directly, but rather on the order of pairs, making it more robust when ties are present.
+3. **More Conservative:** It often produces lower correlation coefficients (as we have noticed when comparing the heatmaps for Spearman and Kendall), but they’re usually more accurate and reliable when ties are present.
+
+Since our data has many ties, we will rely on **Kendall’s Tau**.
+
+Let's print the results once more:
+
+```{r}
+get_significance(diabetes, method = "kendall")
+```
+
+
+
+### Key findings
+
+The analysis reveals several biologically relevant associations between the variables studied. Cholesterol levels show significant correlations with glycemic control (glyhb) and body weight, which aligns with established relationships between metabolic health and lipid profiles. Glycated hemoglobin (glyhb) is notably correlated with variables such as waist circumference, hip circumference, BMI, and waist-to-hip ratio, all of which are known indicators of metabolic syndrome and insulin resistance. The robust correlation between glyhb and these anthropometric measures reinforces their importance as risk factors for metabolic disorders.
+
+Blood pressure (both systolic and diastolic) exhibits significant associations with weight, waist circumference, and BMI. This relationship supports the well-documented link between obesity and hypertension. Additionally, the association of blood pressure with glycated hemoglobin suggests potential interactions between cardiovascular health and blood glucose regulation.
+
+Interestingly, cholesterol levels also show correlations with various anthropometric measures, albeit to a lesser degree. The observed associations could indicate underlying metabolic processes linking lipid metabolism, body composition, and cardiovascular risk.
+
+## Principal Component Anaysis
+
+**Principal Component Analysis (PCA)** is a powerful dimensionality reduction technique commonly used in data analysis and machine learning. Its primary purpose is to reduce the number of features (variables) in a dataset while preserving as much of the original information as possible. 
+
+PCA achieves dimensionality reduction by transforming the original variables into a new set of uncorrelated variables, called Principal Components (PCs). These components are linear combinations of the original variables and are ranked in order of the amount of variance they explain in the data:
+
+1. **PC1 (First Principal Component):** The direction in which the data varies the most.
+2. **PC2 (Second Principal Component):** The direction of the second-largest variance, orthogonal to PC1.
+3. **And so on...**
+
+The idea is that a small number of these principal components can capture most of the variability present in the dataset.
+
+In this study, PCA will be used to **reduce the dimensionality of the dataset**, making visualization of classification boundaries feasible and enhancing our understanding of how the different classes (Diabetic, Non-Diabetic, Prediabetic) are distributed in the feature space.
+
+
+```{r}
+
+#install.packages("factoextra")
+library(factoextra)
+
+# Performing PCA
+pca_result <- prcomp(diabetes, scale = TRUE)
+
+# Scree Plot
+fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 50))
+
+# Inspecting Loadings
+pca_result$rotation
+```
+
+```{r}
+library(plotly)
+library(dplyr)
+# Extracting the loadings (arrows)
+loadings <- as.data.frame(pca_result$rotation[, 1:3])
+pca_scores <- as.data.frame(pca_result$x[, 1:3])
+
+# Scale the loadings for better visualization
+loadings$PC1 <- loadings$PC1 * max(abs(pca_scores$PC1))
+loadings$PC2 <- loadings$PC2 * max(abs(pca_scores$PC2))
+loadings$PC3 <- loadings$PC3 * max(abs(pca_scores$PC3))
+
+# Create the 3D scatter plot with PCA scores
+fig <- plot_ly() %>%
+  add_trace(
+    data = pca_scores,
+    x = ~PC1,
+    y = ~PC2,
+    z = ~PC3,
+    type = 'scatter3d',
+    mode = 'markers',
+    marker = list(size = 3, color = 'orange'),
+    name = 'Data Points'
+  )
+
+# Adding loadings as arrows, one by one
+for (i in 1:nrow(loadings)) {
+  fig <- fig %>%
+    add_trace(
+      x = c(0, loadings$PC1[i]),
+      y = c(0, loadings$PC2[i]),
+      z = c(0, loadings$PC3[i]),
+      type = 'scatter3d',
+      mode = 'lines+text',
+      line = list(color = 'steelblue', width = 4),
+      text = rownames(loadings)[i],
+      textposition = 'top center',
+      name = paste("Loading", rownames(loadings)[i])
+    )
+}
+
+# Layout
+fig <- fig %>%
+  layout(
+    title = "3D PCA Plot with Loadings",
+    scene = list(
+      xaxis = list(title = 'PC1'),
+      yaxis = list(title = 'PC2'),
+      zaxis = list(title = 'PC3')
+    )
+  )
+
+fig
+
+```
+
+
+1. **Scree Plot**
+The scree plot shows the percentage of variance explained by each of the principal components (PCs). The purpose of this plot is to help determine how many components are worth keeping for further analysis. 
+
+- **PC1 (31.1%)**, **PC2 (16.4%)** and **PC3 (12.6%)** explain the most variance, totaling about **60%**.
+- The first few components explain the majority of the variance, and the contribution decreases with each subsequent component.
+- By the time we reach **PC8–PC10**, the variance explained is minimal, suggesting these components contribute very little to the overall information.
+
+### 2. **PCA 3D plot**
+This is a **biplot**, which shows the projection of the original variables (arrows) and data points (orange dots) in the space defined by the first three principal components. The length and direction of each arrow indicate how strongly each original variable contributes to the PCs and their correlations.
+  - Variables pointing in the same direction are positively correlated.
+  - Variables pointing in opposite directions are negatively correlated.
+  - Longer arrows indicate stronger contributions to the PCs.
+
+### 3. **Loadings Table**  
+This table shows the contribution of each original variable to the principal components (**loadings**). High loadings (absolute values) indicate strong relationships between the variable and the principal component.  
+  
+- For **PC1 (31.1%)**:  
+  - **Weight (0.417), Waist (0.437), Hip (0.380), BMI (0.418)** are heavily loaded.   
+  - This suggests **PC1** mostly captures the **body size or obesity-related factors**.  
+  
+- For **PC2 (16.4%)**:  
+  - **Age (0.427), Glyhb (0.407), Stab.glu (0.360)** contribute heavily.  
+  - Suggests **PC2** is capturing aspects related to **age and glucose metabolism**.  
+  
+- For **PC3 (12.6%)**:  
+  - **Bp.s (0.469), Bp.d (0.508), Hdl (0.449)** are the most heavily loaded variables.  
+  - This suggests **PC3** is primarily capturing **blood pressure and cholesterol-related factors**.  
+  
+- **PC4 to PC10**:   
+  - Contribute less to the overall variance.  
+  - Each component captures smaller, more specific patterns not captured by the previous principal components.
+
+
+## K-Clustering
+
+In this section, we proceed with **categorizing the dataset into three classes: Non-Diabetic, Prediabetic, and Diabetic** based on the key variable **`stab.glu` (stable glucose)**. After categorization and PCA, we proceed to reduce the dimensionality of the data, making visualization and further analysis more efficient.  
+
+----
+***NOTE***
+Having an actual diagnosis of diabetes would be ideal, but since this is missing, we will create it based soley on `stab.glu` so that we can proceed with a simple machine learning analysis.
+----
+
+Additionally, we employ **K-means clustering** to identify natural groupings within the data and compare these clusters with the labeled categories. This helps us gain insights into how well the clustering algorithm identifies patterns that correspond to the diabetes status categories.
+
+
+```{r}
+
+
+# Categorize stab.glu into Non-Diabetic, Prediabetic, and Diabetic
+
+diabetes$DiabetesStatus <- cut(diabetes$stab.glu,
+                           breaks = c(-Inf, 99, 125, Inf),
+                           labels = c("Non-Diabetic", "Prediabetic", "Diabetic"))
+
+# Extracting the relevant columns (standardizing them)
+data_scaled <- scale(diabetes[, c('chol', 'stab.glu', 'hdl', 'ratio', 'glyhb', 'age', 'height', 'weight', 'waist', 'hip', 'BMI', 'waist_to_hip', 'bp.s', 'bp.d')])
+
+# PCA
+pca_res <- prcomp(data_scaled, scale. = TRUE)
+pca_data <- as.data.frame(pca_res$x)
+pca_data$DiabetesStatus <- diabetes$DiabetesStatus
+
+# K-means clustering with 3 clusters
+set.seed(123)
+kmeans_res <- kmeans(pca_data[, c('PC1', 'PC2', 'PC3')], centers = 3)
+pca_data$Cluster <- as.factor(kmeans_res$cluster)
+
+# Interactive 3D Plot with Plotly (Diabetes Status)
+plot1 <- plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~DiabetesStatus, colors = c('red', 'green', 'blue')) %>%
+  add_markers() %>%
+  layout(title = "3D PCA Plot with Diabetes Status",
+         scene = list(xaxis = list(title = 'PC1'),
+                      yaxis = list(title = 'PC2'),
+                      zaxis = list(title = 'PC3')))
+
+# Interactive 3D Plot with Plotly (K-means Clustering)
+plot2 <- plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~Cluster, colors = c('red', 'green', 'blue')) %>%
+  add_markers() %>%
+  layout(title = "3D K-means Clustering on PCA-Reduced Data",
+         scene = list(xaxis = list(title = 'PC1'),
+                      yaxis = list(title = 'PC2'),
+                      zaxis = list(title = 'PC3')))
+
+plot1
+plot2
+```
+
+
+
+**PCA Scatter Plot with Diabetes Status**  
+- The plot shows data points reduced to three principal components (PC1, PC2 and PC3) and colored by diabetes status:  
+- It seems like there's some overlap between groups, especially between Non-Diabetic and Prediabetic points. However, the Diabetic group (blue) appears more separated and tends to occupy one side of the plot, which suggests some level of distinguishability.  
+
+**K-means Clustering on PCA-Reduced Data**  
+- This scatter plot shows clusters formed using **K-means clustering** on the reduced data.  
+- The clustering seems to capture some meaningful structure:  
+  - **Blue Cluster (Cluster 3)** appears to align somewhat with the Diabetic points from the previous image.  
+  - **Green Cluster (Cluster 2)** seems to represent the middle ground, likely containing mostly Prediabetic points.  
+  - **Red Cluster (Cluster 1)** seems to represent Non-Diabetic points, although there is still some overlap.  
+
+### Key findings
+
+- PCA is successful in reducing dimensions while preserving some structure in the data.  
+- K-means clustering shows a reasonable separation between groups, especially with the **Diabetic group (blue cluster)** being more distinct.  
+- **Overlap exists between Non-Diabetic and Prediabetic points**, which might indicate that stable glucose alone is not sufficient for a perfect classification but provides valuable information.  
+- The clustering seems to identify broader patterns but could benefit from more advanced classification models to improve the accuracy of distinguishing between these categories.  
+
+
+## Machine Learning algorithms
+
+Lastly, we will train 3 models on the data and evaluate how well they perform when classifying new data into diabetic, pre-diabetic or non diabetic. 
+
+**k-Nearest Neighbors (kNN):**  
+kNN is a simple, instance-based learning algorithm used for classification and regression. It works by finding the 'k' most similar data points (neighbors) to a given input and making predictions based on their labels. 
+
+**Support Vector Machine (SVM):**  
+SVM is a powerful supervised learning algorithm used for classification and regression. It works by finding the optimal hyperplane that best separates data points of different classes. By using kernels, it can model complex, non-linear boundaries. SVMs are robust to high-dimensional data but can be sensitive to noise.
+
+### **Decision Trees:**  
+Decision Trees are a flowchart-like model used for classification and regression. They split data into subsets based on the most informative features, making decisions at each node. They are easy to visualize and interpret but prone to overfitting if not properly pruned.
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(factoextra)
+library(cluster)
+library(plotly)
+library(caret)
+
+
+
+# Split data into training and testing
+set.seed(123)
+train_index <- createDataPartition(pca_data$DiabetesStatus, p = 0.7, list = FALSE)
+train_data <- pca_data[train_index, ]
+test_data <- pca_data[-train_index, ]
+
+# Define the models to train
+models <- list(
+  SVM = train(DiabetesStatus ~ PC1 + PC2 + PC3, data = train_data, method = 'svmRadial'),
+  KNN = train(DiabetesStatus ~ PC1 + PC2 + PC3, data = train_data, method = 'knn', tuneLength = 5),
+  DecisionTree = train(DiabetesStatus ~ PC1 + PC2 + PC3, data = train_data, method = 'rpart')
+)
+
+# Predict on test data & calculate performance metrics
+results <- lapply(models, function(model) {
+  predictions <- predict(model, test_data)
+  cm <- confusionMatrix(predictions, test_data$DiabetesStatus)
+  data.frame(Accuracy = cm$overall['Accuracy'])
+})
+
+# Combine results into a single data frame for comparison
+results_df <- do.call(rbind, results)
+results_df <- cbind(Model = names(models), results_df)
+print(results_df)
+
+# Plotly 3D Scatter Plot with Decision Boundaries (KNN Example)
+grid <- expand.grid(PC1 = seq(min(pca_data$PC1), max(pca_data$PC1), length.out = 50),
+                    PC2 = seq(min(pca_data$PC2), max(pca_data$PC2), length.out = 50),
+                    PC3 = seq(min(pca_data$PC3), max(pca_data$PC3), length.out = 50))
+
+predictions <- predict(models$KNN, grid)
+grid$Prediction <- predictions
+
+plot_ly() %>%
+  add_markers(data = pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~DiabetesStatus, colors = c('red', 'green', 'blue'),
+              marker = list(size = 3)) %>%
+  add_markers(data = grid, x = ~PC1, y = ~PC2, z = ~PC3, color = ~Prediction, opacity = 0.2, marker = list(size = 2)) %>%
+  layout(title = '3D PCA Plot with Decision Boundaries',
+         scene = list(xaxis = list(title = 'PC1'),
+                      yaxis = list(title = 'PC2'),
+                      zaxis = list(title = 'PC3')))
+```
+
+
+
+
