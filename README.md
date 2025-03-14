@@ -11,6 +11,7 @@ This project demonstrates a comprehensive analysis of a diabetes-related dataset
 ```
 |-- Basic_Data_Analysis_with_R.Rmd  # The main R Markdown file
 |-- Basic_Data_Analysis_with_R.html # The generated HTML report
+|-- Basic_Data_Analysis_with_R.r # R file with the complete code
 |-- README.md                       # This README file
 
 ```
